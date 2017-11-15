@@ -1,32 +1,30 @@
 /**
-  Copyright (C) 2012-2014 by Autodesk, Inc.
+  Copyright (C) 2012-2017 by Autodesk, Inc.
   All rights reserved.
-  
-  WinCNC post processor configuration.
-  $Revision: 38441 $
-  $Date: 2015-02-01 16:06:26 +0100 (sÃ¸, 01 feb 2015) $
 
-  FORKID {9C9F6D64-F5A8-44b7-AB2F-4E3FC020C0EA}
-*/
-/**
-Wincnc ShopSabre RC4 Port
-author: Sam Winkelstein  sjwinkels44@gmail.com
-all changes to program to work with shop Sabre will have comments expaining them. 
-are and my own and are not done by autodesk.
+  ShopSabre MMP (WinCNC) post processor configuration.
+
+  $Revision: 41601 2e6200651f01fad70bd72491303b9729cd57fc6e $
+  $Date: 2017-09-14 12:02:56 $
+
+  FORKID {9D087E38-BFB1-4B4F-A793-1A96AFBA00FD}
 */
 
-description = "ShopSabre m5 Arcs (inch) (*.tap)";
-vendor = "Autodesk, Inc.";
-vendorUrl = "http://www.autodesk.com";
-legal = "Copyright (C) 2012-2014 by Autodesk, Inc.";
+description = "ShopSabre with WinCNC control";
+vendor = "ShopSabre CNC";
+vendorUrl = "http://www.shopsabre.com";
+legal = "Copyright (C) 2012-2017 by Autodesk, Inc.";
 certificationLevel = 2;
 minimumRevision = 24000;
 
+longDescription = "Generic post for ShopSabre routers with WinCNC control.";
+
 extension = "tap";
 setCodePage("ascii");
+
+capabilities = CAPABILITY_MILLING;
 tolerance = spatial(0.002, MM);
 
-//changed properties to match shopSabre RC4 *****************/
 minimumChordLength = spatial(0.01, MM);
 minimumCircularRadius = spatial(0.01, MM);
 maximumCircularRadius = spatial(1000, MM);
@@ -34,7 +32,7 @@ minimumCircularSweep = toRad(0.01);
 maximumCircularSweep = toRad(180);
 allowHelicalMoves = true;
 allowedCircularPlanes = undefined; // allow any circular motion
-//**************
+
 
 
 // user-defined properties
@@ -44,10 +42,21 @@ properties = {
   showSequenceNumbers: false, // show sequence numbers
   sequenceNumberStart: 10, // first sequence number
   sequenceNumberIncrement: 1, // increment for sequence numbers
-  optionalStop: false, // optional stop
+  optionalStop: true, // optional stop
   separateWordsWithSpace: true, // specifies that the words should be separated with a white space
-  useToolChanger: false, // specifies that a tool changer is available
-  ATCMode: 0 // M0 or M1 on the ATC line in the WinCNC.ini file
+  useToolChanger: true // specifies that a tool changer is available
+};
+
+// user-defined property definitions
+propertyDefinitions = {
+  writeMachine: {title:"Write machine", description:"Output the machine settings in the header of the code.", group:0, type:"boolean"},
+  writeTools: {title:"Write tool list", description:"Output a tool list in the header of the code.", group:0, type:"boolean"},
+  showSequenceNumbers: {title:"Use sequence numbers", description:"Use sequence numbers for each block of outputted code.", group:1, type:"boolean"},
+  sequenceNumberStart: {title:"Start sequence number", description:"The number at which to start the sequence numbers.", group:1, type:"integer"},
+  sequenceNumberIncrement: {title:"Sequence number increment", description:"The amount by which the sequence number is incremented by in each block.", group:1, type:"integer"},
+  optionalStop: {title:"Optional stop", description:"Outputs optional stop code during when necessary in the code.", type:"boolean"},
+  separateWordsWithSpace: {title:"Separate words with space", description:"Adds spaces between words if 'yes' is selected.", type:"boolean"},
+  useToolChanger: {title:"Use tool changer", description:"Specifies that a tool changer is available.", type:"boolean"}
 };
 
 var numberOfToolSlots = 9999;
@@ -68,7 +77,7 @@ var hFormat = createFormat({prefix:"H", decimals:0});
 
 var xyzFormat = createFormat({decimals:(unit == MM ? 3 : 4), forceDecimal:true});
 var abcFormat = createFormat({decimals:3, forceDecimal:true, scale:DEG});
-var feedFormat = createFormat({decimals:(unit == MM ? 1 : 2)});
+var feedFormat = createFormat({decimals:(unit == MM ? 3 : 4), forceDecimal:true});
 var toolFormat = createFormat({decimals:0});
 var rpmFormat = createFormat({decimals:0});
 var secFormat = createFormat({decimals:3, forceDecimal:true}); // seconds - range 0.001-1000
@@ -155,7 +164,7 @@ function onOpen() {
   var description = machineConfiguration.getDescription();
 
   if (properties.writeMachine && (vendor || model || description)) {
-    writeComment(localize("ShopSabre RC4"));
+    writeComment(localize("Machine"));
     if (vendor) {
       writeComment("  " + localize("vendor") + ": " + vendor);
     }
@@ -163,7 +172,7 @@ function onOpen() {
       writeComment("  " + localize("model") + ": " + model);
     }
     if (description) {
-      writeComment("  " + localize("shopSabre RC4 novaLabs") + ": "  + description);
+      writeComment("  " + localize("description") + ": "  + description);
     }
   }
 
@@ -350,8 +359,9 @@ function onSection() {
 
     // retract to safe plane
     retracted = true;
-    writeBlock(gFormat.format(53) + " Z "); // retract
+    writeBlock(gFormat.format(53) + " Z"); // retract
     // writeBlock(gFormat.format(28) + "Z"); // retract
+    onCommand(COMMAND_STOP_SPINDLE);
     zOutput.reset();
   }
 
@@ -415,41 +425,20 @@ function onSection() {
         warning(localize("Spindle speed exceeds maximum value."));
       }
       writeBlock(
-        sOutput.format(tool.spindleRPM), mFormat.format(tool.clockwise ? 3 : 4)
+        sOutput.format(tool.spindleRPM)
       );
-    }
-  }
-  else
-  {
-    if(isFirstSection())
-    {
-      if (tool.spindleRPM < 1)
-      {
-       error(localize("Spindle speed out of range."));
-       return;
-      }
-      if(tool.spindleRPM > 18000)
-      {
-       warning(localize("Spindle speed exceeds maximum value."));
-      }
-      /** GCode to start section: 
-      added G53 Z
-      added G0 X Y
-      modified M3 Call to be its own block
-      **/
-      var z = zOutput.format(0.5);
-      var x = xOutput.format(0.0000);
-      var y = yOutput.format(0.0000);
-      writeBlock(gFormat.format(53) + " Z ");
-      writeBlock(gFormat.format(0), x, y);
-      writeBlock(sOutput.format(tool.spindleRPM));
-      writeBlock(mFormat.format(tool.clockwise ? 3 : 4));
-      //end modification
+      writeBlock(
+        mFormat.format(tool.clockwise ? 3 : 4)
+      );
+      onDwell(4); // wait for spindle
     }
   }
 
   // wcs
 /*
+  if (!properties.useToolChanger || insertToolCall) { // force work offset when changing tool
+    currentWorkOffset = undefined;
+  }
   var workOffset = currentSection.workOffset;
   if (workOffset == 0) {
     warningOnce(localize("Work offset has not been specified. Using G54 as WCS."), WARNING_WORK_OFFSET);
@@ -461,7 +450,7 @@ function onSection() {
       return;
     } else {
       if (workOffset != currentWorkOffset) {
-        writeBlock(gFormat.format(53 + workOffset) + " Z "); // G54->G57
+        writeBlock(gFormat.format(53 + workOffset)); // G54->G57
         currentWorkOffset = workOffset;
       }
     }
@@ -512,20 +501,6 @@ function onSection() {
   }
 
   if (insertToolCall || retracted) {
-    if (properties.useToolChanger) {
-      switch (properties.ATCMode) {
-      case 0:
-        writeBlock(mFormat.format(37), hFormat.format(tool.lengthOffset));
-        break;
-      case 1:
-        writeBlock(mFormat.format(37), "T" + toolFormat.format(tool.number));
-        break;
-      default:
-        error(localize("Invalid ATC mode. Must be 0 or 1."));
-        return;
-      }
-    }
-
     gMotionModal.reset();
     // writeBlock(gPlaneModal.format(17));
 
@@ -534,12 +509,12 @@ function onSection() {
         gAbsIncModal.format(90),
         gMotionModal.format(0), xOutput.format(initialPosition.x), yOutput.format(initialPosition.y)
       );
-      writeBlock(gMotionModal.format(0), conditional(properties.useToolChanger, gFormat.format(43)), zOutput.format(initialPosition.z));
+      // writeBlock(gMotionModal.format(0), conditional(properties.useToolChanger, gFormat.format(43)), zOutput.format(initialPosition.z));
     } else {
       writeBlock(
         gAbsIncModal.format(90),
         gMotionModal.format(0),
-        conditional(properties.useToolChanger, gFormat.format(43)),
+        // conditional(properties.useToolChanger, gFormat.format(43)),
         xOutput.format(initialPosition.x),
         yOutput.format(initialPosition.y),
         zOutput.format(initialPosition.z)
@@ -562,9 +537,6 @@ function onDwell(seconds) {
   seconds = clamp(0.001, seconds, 99999.999);
   writeBlock(gFormat.format(4), "X" + secFormat.format(seconds));
 }
-
-
-
 
 function onSpindleSpeed(spindleSpeed) {
   writeBlock(sOutput.format(spindleSpeed));
@@ -802,16 +774,18 @@ function onCircular(clockwise, cx, cy, cz, x, y, z, feed) {
     }
     switch (getCircularPlane()) {
     case PLANE_XY:
-            // modified to gFormat instead of Gmotion Model tocomply with shopsabre RC4 wincnc
-        writeBlock(gFormat.format(clockwise ? 2 : 3), xOutput.format(x), iOutput.format(cx - start.x, 0), jOutput.format(cy - start.y, 0), feedOutput.format(feed));
+      gMotionModal.reset();
+      xOutput.reset();
+      writeBlock(gMotionModal.format(clockwise ? 2 : 3), xOutput.format(x), yOutput.format(y), iOutput.format(cx - start.x, 0), jOutput.format(cy - start.y, 0), feedOutput.format(feed));
+      break;
     default:
       linearize(tolerance);
     }
   } else {
     switch (getCircularPlane()) {
     case PLANE_XY:
-    // modified to gFormat instead of Gmotion Model tocomply with shopsabre RC4 wincnc
-      writeBlock( gFormat.format(clockwise ? 2 : 3), xOutput.format(x), yOutput.format(y), zOutput.format(z), iOutput.format(cx - start.x, 0), jOutput.format(cy - start.y, 0), feedOutput.format(feed));
+      gMotionModal.reset();
+      writeBlock(gMotionModal.format(clockwise ? 2 : 3), xOutput.format(x), yOutput.format(y), zOutput.format(z), iOutput.format(cx - start.x, 0), jOutput.format(cy - start.y, 0), feedOutput.format(feed));
       break;
     default:
       linearize(tolerance);
@@ -834,13 +808,19 @@ function onCommand(command) {
     onCommand(tool.clockwise ? COMMAND_SPINDLE_CLOCKWISE : COMMAND_SPINDLE_COUNTERCLOCKWISE);
     return;
   case COMMAND_SPINDLE_CLOCKWISE:
-    writeBlock(mFormat.format(3));
+    if (properties.useToolChanger) {
+      writeBlock(mFormat.format(3));
+    }
     return;
   case COMMAND_SPINDLE_COUNTERCLOCKWISE:
-    writeBlock(mFormat.format(4));
+    if (properties.useToolChanger) {
+      writeBlock(mFormat.format(4));
+    }
     return;
   case COMMAND_STOP_SPINDLE:
-    writeBlock(mFormat.format(5));
+    if (properties.useToolChanger) {
+      writeBlock(mFormat.format(5));
+    }
     return;
   case COMMAND_ORIENTATE_SPINDLE:
     if (properties.useToolChanger) {
@@ -872,17 +852,14 @@ function onSectionEnd() {
 }
 
 function onClose() {
-    //modified end gcode for shopsabre 
-    //added G53 Z
-    //added G0 X Y
-    //added M51
   onCommand(COMMAND_COOLANT_OFF);
+
+  writeBlock(gFormat.format(53) + " Z"); // retract
+  // writeBlock(gFormat.format(28) + "Z"); // retract
   onCommand(COMMAND_STOP_SPINDLE);
-  writeBlock(gFormat.format(53) + " Z ")
-  writeBlock(gFormat.format(0) + " X0 Y0"); // retract
-  writeBlock(mFormat.format(51));
 
-//  setWorkPlane(new Vector(0, 0, 0)); // reset working plane
+  writeBlock(gFormat.format(53), "P10");
+  zOutput.reset();
 
-  //writeBlock(gFormat.format(28)); // home XYZ
+  setWorkPlane(new Vector(0, 0, 0)); // reset working plane
 }
